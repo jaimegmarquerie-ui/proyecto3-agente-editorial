@@ -1,0 +1,156 @@
+{
+  "schema_version": "0.1",
+  "profile_id": "la-insumisa-moscardo",
+  "status": "Demo profile. Bookshop not yet open: no sales, stock or customer data.",
+  "source_document": "profiles/ficha_libreria_moscardo.md",
+  "name": "La Insumisa",
+  "desired_identity": "Un lugar cuyas paredes y páginas chorreen de humanismo, de hedonismo ético, de historias, de certezas que derivan en preguntas y luego en dudas, de derechos humanos y de feminismo. Un espacio para la gente del barrio y barrios colindantes, vecinos de siempre y nuevos, enfocado en historias que emocionen profundamente, donde la ficción actúe como espejo de la dignidad y las realidades humanas.",
+  "values": [
+    {
+      "id": "historias_con_alma",
+      "label": "Historias con alma que emocionen",
+      "description": "Ficción de alta calidad que conmueva, genere empatía universal y ponga en el centro las vivencias, dolores y alegrías de la gente común."
+    },
+    {
+      "id": "feminismo_cuidados_clase",
+      "label": "Feminismo de los cuidados y de clase",
+      "description": "Miradas literarias que conectan la teoría con la realidad cotidiana de las mujeres de barrio, la crianza, la conciliación y el apoyo mutuo intergeneracional."
+    },
+    {
+      "id": "memoria_periferia",
+      "label": "Memoria viva de la periferia, arraigo e identidad",
+      "description": "Identidad local, luchas históricas del vecindario e historias obreras como eje de orgullo colectivo, reflejadas en la narrativa de ficción."
+    },
+    {
+      "id": "hedonismo_humanismo",
+      "label": "Hedonismo ético y humanismo crítico",
+      "description": "Lecturas que defienden el placer de pensar libremente frente al ruido y el consumo rápido."
+    },
+    {
+      "id": "reverso_realidad",
+      "label": "El reverso de la realidad (mirada internacional)",
+      "description": "Periodismo y crónica internacional que visibiliza los rostros humanos de las grandes noticias globales."
+    }
+  ],
+  "genres_sections": [
+    {
+      "name": "Narrativa de ficción",
+      "priority": "high",
+      "catalog_share_hint": 0.75,
+      "notes": "Motor central. Novela contemporánea, clásicos recuperados, voces latinoamericanas e internacionales."
+    },
+    {
+      "name": "Novela gráfica e ilustración",
+      "priority": "high",
+      "notes": "Cómic de autor; novela gráfica social, biográfica, feminista y de memoria histórica."
+    },
+    {
+      "name": "Periodismo y crónica",
+      "priority": "high",
+      "notes": "Investigación de largo aliento, no ficción internacional, periodismo narrativo."
+    },
+    {
+      "name": "Crónica y memoria local",
+      "priority": "high",
+      "notes": "Autoedición, fanzines de Carabanchel/Usera, historia vecinal oral.",
+      "coverage_warning": "Self-published and zine material is unlikely to appear in Tavily or Google Books results; expect gaps and report them."
+    },
+    {
+      "name": "Poesía",
+      "priority": "medium",
+      "notes": "Poesía social, spoken word, de la diáspora, feminista y de conciencia."
+    },
+    {
+      "name": "Ensayo",
+      "priority": "low",
+      "notes": "Urbanismo, sociología de barrio, pensamiento crítico. Se prefiere que las ideas lleguen a través de la novela o la novela gráfica."
+    }
+  ],
+  "target_readers": [
+    "Lectores curiosos que buscan historias de ficción potentes que emocionen y dejen huella.",
+    "Profesionales de las artes y la comunicación con conciencia social y estética que valoran la novela de culto y la novela gráfica de autor.",
+    "Vecinos y vecinas de toda la vida y población migrante del barrio que buscan narrativa honesta y accesible, poesía cercana y cómic, en un espacio comunitario sin barreras elitistas."
+  ],
+  "location": {
+    "area": "Moscardó (distrito de Usera) y zonas colindantes de Carabanchel (Comillas, Opañel), Madrid",
+    "declared_context": "Contexto descrito por el librero: arraigo obrero tradicional, multiculturalidad internacional y llegada de creadores. La librería quiere ser un puente que use la novela y la novela gráfica para dinamizar la vida vecinal y artística.",
+    "usage_rule": "Declared context only. The agent must never infer readers' tastes, income or demographics from the location, and must not invent local demand."
+  },
+  "book_languages": [
+    "es"
+  ],
+  "translations_into_spanish": true,
+  "output_language": "es",
+  "preferred_publishers": {
+    "exclusive": false,
+    "independent": [
+      "Libros del Asteroide",
+      "Blackie Books",
+      "Periférica",
+      "Impedimenta",
+      "Sexto Piso",
+      "Errata Naturae",
+      "Libros del K.O.",
+      "Revista 5W",
+      "Astiberri",
+      "Fulgencio Pimentel",
+      "Liana Editorial",
+      "Capitán Swing",
+      "Katakrak",
+      "Traficantes de Sueños"
+    ],
+    "large_groups": [
+      {
+        "group": "Penguin Random House",
+        "imprints": [
+          "Alfaguara",
+          "Literatura Random House",
+          "Salamandra Graphic"
+        ]
+      },
+      {
+        "group": "Grupo Planeta",
+        "imprints": [
+          "Seix Barral"
+        ]
+      },
+      {
+        "group": "Feltrinelli",
+        "imprints": [
+          "Anagrama"
+        ]
+      }
+    ],
+    "rule": "Preference signal, not a filter: other publishers are allowed. Large-group titles are selected with the same criteria (emotion, commitment)."
+  },
+  "not_a_fit": [
+    "Best-sellers comerciales masivos diseñados por algoritmos",
+    "Autoayuda simplista",
+    "Novela o ensayo con jerga fría, pedante o excluyente"
+  ],
+  "backlist_new_balance": {
+    "new_releases": 0.5,
+    "backlist": 0.5,
+    "notes": "Novedades con criterio propio estricto; fondo de largo recorrido, especialmente novelas que merecen ser rescatadas por su carga emocional."
+  },
+  "seed_queries": [
+    {
+      "type": "topic",
+      "query": "genocidio en Palestina"
+    },
+    {
+      "type": "author",
+      "query": "Mariana Enríquez"
+    },
+    {
+      "type": "literary_event",
+      "query": "Nobel a Anne Carson",
+      "requires_event_verification": true
+    }
+  ],
+  "agent_usage_notes": [
+    "Percentages and priorities are ranking weights for relevance, not stock quotas: the agent does not manage inventory.",
+    "The agent explains relevance using these declared values; it does not decide purchases."
+  ],
+  "pending_clarifications": []
+}
