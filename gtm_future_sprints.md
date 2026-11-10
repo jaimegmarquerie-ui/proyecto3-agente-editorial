@@ -1,4 +1,4 @@
-# Future GTM sprints — DRAFT (9 Nov 2026)
+# Future GTM sprints — DRAFT (updated 10 Nov 2026)
 
 > These sprints are **next steps after the MVP**, not work already done.
 > Source: product briefing v3 (Sprint 1 Validate · Sprint 2 Demand · Sprint 3 Economic impact), rewritten in the official format.
@@ -12,7 +12,21 @@
 | **Target user / buyer** | User #1: the founder's own future bookshop (La Insumisa, Moscardó) + 2 independent bookshops in Madrid (owner or catalogue buyer) |
 | **Channel / motion** | Founder-led: use the agent for La Insumisa's opening catalogue; offer a free 4-week pilot through direct visits to ~10 independent bookshops (Usera, Carabanchel, central Madrid) and through the Madrid booksellers' association (to be identified and verified) |
 | **Key deliverable** | Working agent with each bookshop's own JSON profile + 4 dossiers per bookshop + short feedback form |
-| **Success metric** | Research time per topic: from ~2 h (manual, to be measured) to under 45 min including human review · ≥90% of ISBNs correct for the cited edition · the founder and ≥1 of 2 external bookshops want to continue |
+| **Success metric** | Research time per dossier: from ~4 h (manual, to be measured) to ~45 min with the agent, including human review · ≥90% of ISBNs correct for the cited Spanish edition · the founder and ≥1 of 2 external bookshops want to continue |
+
+## ROI scenario (hypothesis, not measured)
+
+| Item | Value |
+|------|-------|
+| Manual research per dossier | ~4 h (estimate, to be measured in Sprint 1) |
+| With the agent (incl. human review) | ~45 min (estimate) |
+| Time saved per dossier | ~3 h 15 min |
+| Dossiers per month | 4 |
+| **Hours recovered per month** | **~13 h** |
+| Imputed operating cost of the bookseller's time | 30 €/h (assumption) |
+| **Theoretical value** | **~390 €/month** |
+
+This is a theoretical value of recovered time, **not** revenue, not a measured saving and not a sales impact. Sprint 1 must measure the real manual and assisted times before any figure is presented as a result.
 
 ## Sprint 2 — Understand demand
 
