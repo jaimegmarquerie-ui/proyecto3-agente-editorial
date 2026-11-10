@@ -26,7 +26,7 @@
 | Imputed operating cost of the bookseller's time | 30 €/h (assumption) |
 | **Theoretical value** | **~390 €/month** |
 
-This is a theoretical value of recovered time, **not** revenue, not a measured saving and not a sales impact. Sprint 1 must measure the real manual and assisted times before any figure is presented as a result.
+The ~390 €/month is an **imputed value of time potentially freed** for counter service, book recommendations and cultural activities. It is **not** additional sales, net profit, incremental revenue or a measured saving, and the 30 €/h is an imputed operating rate, not a net salary. To show real economic ROI, Sprint 1 must measure manual vs assisted time (the 45 min includes human review, not only run time), the agent's tool costs, the human corrections needed and the value generated. No subscription price is assumed.
 
 ## Sprint 2 — Understand demand
 
