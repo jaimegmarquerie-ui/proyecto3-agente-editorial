@@ -10,10 +10,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Consulta el agente editorial.")
     parser.add_argument("--profile", required=True, help="Ruta al perfil JSON")
     parser.add_argument("--query", required=True, help="Consulta editorial")
+    parser.add_argument("--author", help="Autor del que buscar libros en Open Library")
     args = parser.parse_args(argv)
 
     result = build_graph().invoke(
-        {"profile_path": args.profile, "query": args.query}
+        {"profile_path": args.profile, "query": args.query, "author": args.author}
     )
     if result.get("error"):
         print(f"Error: {result['error']}")
