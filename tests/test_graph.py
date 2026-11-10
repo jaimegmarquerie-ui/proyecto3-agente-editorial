@@ -68,6 +68,25 @@ def one_valid_judgment():
     )
 
 
+def dossier_search_response(first_content="Fragmento de prueba sin ficha bibliografica."):
+    return FakeResponse(
+        {
+            "results": [
+                {
+                    "title": "Libro útil de prueba",
+                    "url": "https://example.test/useful",
+                    "content": first_content,
+                },
+                {
+                    "title": "Libro descartado de prueba",
+                    "url": "https://example.test/discarded",
+                    "content": "Fragmento sin ficha bibliografica.",
+                },
+            ]
+        }
+    )
+
+
 def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
@@ -131,6 +150,8 @@ def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_p
     evidence_path = Path(result["evidence_path"])
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence["judgments"] == result["judgments"]
+    assert Path(result["dossier_path"]).exists()
+    assert evidence["dossier_path"] == result["dossier_path"]
     assert evidence["judge_model"] == graph_module.GEMINI_MODEL
     assert evidence["judge_attempts"] == 1
     assert evidence["results"][1]["url"] == "https://example.test/homonym"
@@ -301,3 +322,106 @@ def test_gemini_401_does_not_retry_or_use_fallback(monkeypatch, tmp_path):
     assert result["judge_attempts"] == 1
     evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
     assert evidence["judge_attempts"] == 1
+
+
+def test_write_dossier_normal_uses_only_useful_results(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        graph_module,
+        "dotenv_values",
+        lambda _path: {"TAVILY_API_KEY": "fake-tavily", "GEMINI_API_KEY": "fake-gemini"},
+    )
+
+    def fake_post(url, **_kwargs):
+        if url == graph_module.TAVILY_SEARCH_URL:
+            return dossier_search_response(
+                "Autor: Autora literal. Editorial: Sello de prueba."
+            )
+        return fake_gemini_response(
+            [
+                {"index": 0, "decision": "util", "reason": "Encaja con las secciones."},
+                {"index": 1, "decision": "no_util", "reason": "No es pertinente."},
+            ]
+        )
+
+    monkeypatch.setattr(graph_module.requests, "post", fake_post)
+    result = graph_module.build_graph(evidence_dir=tmp_path).invoke(
+        {"profile_path": str(PROFILE_PATH), "query": "consulta de prueba"}
+    )
+    dossier_path = Path(result["dossier_path"])
+    dossier = dossier_path.read_text(encoding="utf-8")
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+
+    assert dossier_path.name.startswith("dossier_")
+    assert dossier.startswith("# Dosier editorial")
+    selection = dossier.split("## Selección editorial", 1)[1].split(
+        "## Resultados descartados", 1
+    )[0]
+    assert "Libro útil de prueba" in selection
+    assert "Libro descartado de prueba" not in selection
+    assert "**Interpretación del agente:** Encaja con las secciones." in dossier
+    assert "Relacionado con (interpretación no verificada)" in dossier
+    assert "**Autor:** Autora literal" in dossier
+    assert "**Editorial:** Sello de prueba" in dossier
+    assert "Libro descartado de prueba" in dossier.split("## Resultados descartados", 1)[1]
+    assert "Herramientas usadas:** Tavily, Gemini" in dossier
+    assert "Herramientas fallidas:** ninguna" in dossier
+    assert dossier.rstrip().endswith("El librero decide.")
+    assert evidence["dossier_path"] == result["dossier_path"]
+
+
+def test_write_dossier_marks_absent_book_fields_unverified(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        graph_module,
+        "dotenv_values",
+        lambda _path: {"TAVILY_API_KEY": "fake-tavily", "GEMINI_API_KEY": "fake-gemini"},
+    )
+
+    def fake_post(url, **_kwargs):
+        if url == graph_module.TAVILY_SEARCH_URL:
+            return dossier_search_response("Fragmento sin campos bibliograficos etiquetados.")
+        return fake_gemini_response(
+            [
+                {"index": 0, "decision": "util", "reason": "Tema compatible."},
+                {"index": 1, "decision": "no_util", "reason": "No coincide con el perfil."},
+            ]
+        )
+
+    monkeypatch.setattr(graph_module.requests, "post", fake_post)
+    result = graph_module.build_graph(evidence_dir=tmp_path).invoke(
+        {"profile_path": str(PROFILE_PATH), "query": "consulta"}
+    )
+    dossier = Path(result["dossier_path"]).read_text(encoding="utf-8")
+
+    assert "**Autor:** no verificado" in dossier
+    assert "**ISBN:** no verificado" in dossier
+    assert "**Género:** no verificado" in dossier
+    assert "**Páginas:** no verificado" in dossier
+    assert "**Sinopsis:** no verificado" in dossier
+
+
+def test_write_dossier_marks_judge_error_as_no_final(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        graph_module,
+        "dotenv_values",
+        lambda _path: {"TAVILY_API_KEY": "fake-tavily", "GEMINI_API_KEY": "fake-gemini"},
+    )
+
+    def fake_post(url, **_kwargs):
+        if url == graph_module.TAVILY_SEARCH_URL:
+            return dossier_search_response()
+        return fake_gemini_error(503, "temporary high demand")
+
+    monkeypatch.setattr(graph_module.requests, "post", fake_post)
+    monkeypatch.setattr(graph_module.time, "sleep", lambda _seconds: None)
+    result = graph_module.build_graph(evidence_dir=tmp_path).invoke(
+        {"profile_path": str(PROFILE_PATH), "query": "consulta"}
+    )
+    dossier = Path(result["dossier_path"]).read_text(encoding="utf-8")
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+
+    assert dossier.startswith("# NO FINAL — DOSIER PROVISIONAL")
+    assert "temporary high demand" in dossier
+    assert "no se pudieron evaluar resultados" in dossier.lower()
+    assert result["dossier_path"] == evidence["dossier_path"]
+    assert evidence["judge_attempts"] == 4
+    assert evidence["judge_model"] is None

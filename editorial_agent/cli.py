@@ -19,6 +19,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Error: {result['error']}")
     else:
         print(f"Resultados encontrados: {len(result.get('results', []))}")
+    print(f"Dosier Markdown: {result['dossier_path']}")
     print(f"Evidencia: {result['evidence_path']}")
     return 1 if result.get("error") else 0
 

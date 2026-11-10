@@ -1,6 +1,7 @@
 """LangGraph flow: load profile, search Tavily, judge results, save evidence."""
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,14 @@ GEMINI_GENERATE_CONTENT_URL = (
 GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_FALLBACK_MODEL = "gemini-3-flash-preview"
 GEMINI_RETRY_DELAYS = (2, 5)
+BOOK_FIELD_LABELS = {
+    "Autor": ("autor", "autora", "author"),
+    "Editorial": ("editorial", "publisher"),
+    "ISBN": ("isbn",),
+    "Género": ("genero", "género", "genre"),
+    "Páginas": ("paginas", "páginas", "pages"),
+    "Sinopsis": ("sinopsis", "synopsis", "descripcion", "descripción"),
+}
 
 
 def _service_error_message(response: Any, api_key: str | None) -> str:
@@ -67,6 +76,48 @@ def _service_error_message(response: Any, api_key: str | None) -> str:
     return message[:300]
 
 
+def _tool_summary(state: dict[str, Any]) -> tuple[list[str], list[str]]:
+    error = state.get("error") or ""
+    profile_loaded = isinstance(state.get("profile"), dict)
+    tools_used: list[str] = []
+    tools_failed: list[str] = []
+
+    if profile_loaded:
+        if "TAVILY_API_KEY" in error:
+            tools_failed.append("Tavily")
+        elif "Tavily" in error:
+            tools_used.append("Tavily")
+            tools_failed.append("Tavily")
+        else:
+            tools_used.append("Tavily")
+
+        if "GEMINI_API_KEY" in error:
+            tools_failed.append("Gemini")
+        elif state.get("judge_attempts", 0):
+            tools_used.append("Gemini")
+            if error:
+                tools_failed.append("Gemini")
+
+    return tools_used, tools_failed
+
+
+def _literal_field(source_text: str, labels: tuple[str, ...], limit: int = 500) -> str:
+    alternatives = "|".join(re.escape(label) for label in labels)
+    match = re.search(
+        rf"(?:^|[\r\n|;.])\s*(?:{alternatives})\s*[:：]\s*([^\.\r\n|;]+)",
+        source_text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return "no verificado"
+    return " ".join(match.group(1).split())[:limit] or "no verificado"
+
+
+def _markdown_text(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
 class AgentState(TypedDict, total=False):
     profile_path: str
     query: str
@@ -75,14 +126,25 @@ class AgentState(TypedDict, total=False):
     judgments: list[dict[str, str]]
     judge_model: str | None
     judge_attempts: int
+    tools_used: list[str]
+    tools_failed: list[str]
     error: str | None
     evidence_path: str
+    dossier_path: str
     created_at_utc: str
 
 
-def build_graph(evidence_dir: str | Path | None = None):
+def build_graph(
+    evidence_dir: str | Path | None = None,
+    samples_dir: str | Path | None = None,
+):
     """Build the flow; evidence_dir can be overridden in offline tests."""
     output_dir = Path(evidence_dir) if evidence_dir else PROJECT_ROOT / "evidence"
+    dossier_dir = (
+        Path(samples_dir)
+        if samples_dir is not None
+        else output_dir / "samples" if evidence_dir is not None else PROJECT_ROOT / "samples"
+    )
 
     def read_profile(state: AgentState) -> dict[str, Any]:
         try:
@@ -360,6 +422,118 @@ def build_graph(evidence_dir: str | Path | None = None):
             "judge_attempts": judge_attempts,
         }
 
+    def write_dossier(state: AgentState) -> dict[str, Any]:
+        created_at = datetime.now(timezone.utc)
+        dossier_id = uuid4().hex[:8]
+        dossier_dir.mkdir(parents=True, exist_ok=True)
+        dossier_path = dossier_dir / f"dossier_{created_at:%Y%m%d}_{dossier_id}.md"
+        profile = state.get("profile") or {}
+        error = state.get("error")
+        tools_used, tools_failed = _tool_summary(state)
+        useful = [
+            judgment
+            for judgment in state.get("judgments", [])
+            if judgment.get("decision") == "util"
+            and type(judgment.get("index")) is int
+            and 0 <= judgment["index"] < len(state.get("results", []))
+        ]
+        discarded = [
+            judgment
+            for judgment in state.get("judgments", [])
+            if judgment.get("decision") == "no_util"
+            and type(judgment.get("index")) is int
+            and 0 <= judgment["index"] < len(state.get("results", []))
+        ]
+        results = state.get("results", [])
+        lines = [
+            "# NO FINAL — DOSIER PROVISIONAL" if error else "# Dosier editorial",
+            "",
+            f"**Consulta:** {_markdown_text(state.get('query', 'no verificado'))}",
+            f"**Perfil:** {_markdown_text(profile.get('name', 'no verificado'))}",
+            f"**Fecha UTC:** {created_at.isoformat(timespec='seconds')}",
+            f"**Modelo juez:** {_markdown_text(state.get('judge_model') or 'no respondió')}",
+            f"**Intentos del juez:** {state.get('judge_attempts', 0)}",
+            f"**Herramientas usadas:** {_markdown_text(', '.join(tools_used) or 'ninguna')}",
+            f"**Herramientas fallidas:** {_markdown_text(', '.join(tools_failed) or 'ninguna')}",
+        ]
+        if error:
+            lines.extend(["", f"**Error:** {_markdown_text(error)}"])
+
+        lines.extend(["", "## Selección editorial"])
+        if error and not state.get("judgments"):
+            lines.extend(["", "No se pudieron evaluar resultados; no se inventan selecciones."])
+        elif not useful:
+            lines.extend(["", "No hay resultados marcados como útiles."])
+        else:
+            useful_titles = {
+                judgment["index"]: _markdown_text(results[judgment["index"]].get("title", "no verificado"))
+                for judgment in useful
+            }
+            for judgment in useful:
+                index = judgment["index"]
+                result = results[index]
+                title = _markdown_text(result.get("title") or "no verificado")
+                source_url = str(result.get("url") or "no verificado").replace("<", "%3C").replace(">", "%3E")
+                source_text = str(result.get("content") or "")
+                lines.extend(
+                    [
+                        "",
+                        f"### {title}",
+                        f"**URL de la fuente:** <{source_url}>",
+                        f"**Interpretación del agente:** {_markdown_text(judgment.get('reason', 'no verificado'))}",
+                    ]
+                )
+                for field_name, labels in BOOK_FIELD_LABELS.items():
+                    value = _literal_field(source_text, labels)
+                    lines.append(f"**{field_name}:** {_markdown_text(value)}")
+
+                related_titles = list(
+                    dict.fromkeys(
+                        useful_titles[other["index"]]
+                        for other in useful
+                        if other["index"] != index and useful_titles[other["index"]]
+                    )
+                )
+                lines.extend(
+                    [
+                        "**Relacionado con (interpretación no verificada):**",
+                        *([f"- {title}" for title in related_titles] or ["- no verificado"]),
+                    ]
+                )
+
+        lines.extend(["", "## Resultados descartados"])
+        if discarded:
+            for judgment in discarded:
+                result = results[judgment["index"]]
+                lines.append(
+                    f"- {_markdown_text(result.get('title') or 'no verificado')} "
+                    f"(<{str(result.get('url') or 'no verificado').replace('<', '%3C').replace('>', '%3E')}>): "
+                    f"{_markdown_text(judgment.get('reason', 'no verificado'))}"
+                )
+        elif error and state.get("results"):
+            lines.append("- No evaluados por el error indicado; no se inventan descartes.")
+        else:
+            lines.append("- Ninguno.")
+
+        lines.extend(
+            [
+                "",
+                "## Límites",
+                "Dosier basado en los títulos, URLs y fragmentos recuperados. Los campos "
+                "bibliográficos sin etiqueta y valor literal en el fragmento figuran "
+                "como ‘no verificado’; las relaciones son interpretaciones no verificadas.",
+                "",
+                "El librero decide.",
+                "",
+            ]
+        )
+        dossier_path.write_text("\n".join(lines), encoding="utf-8")
+        return {
+            "dossier_path": str(dossier_path),
+            "tools_used": tools_used,
+            "tools_failed": tools_failed,
+        }
+
     def save_result(state: AgentState) -> dict[str, str]:
         created_at = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -377,6 +551,9 @@ def build_graph(evidence_dir: str | Path | None = None):
             "judgments": state.get("judgments", []),
             "judge_model": state.get("judge_model"),
             "judge_attempts": state.get("judge_attempts", 0),
+            "tools_used": state.get("tools_used", []),
+            "tools_failed": state.get("tools_failed", []),
+            "dossier_path": state.get("dossier_path"),
             "error": state.get("error"),
         }
         evidence_path.write_text(
@@ -386,16 +563,19 @@ def build_graph(evidence_dir: str | Path | None = None):
         return {
             "evidence_path": str(evidence_path),
             "created_at_utc": created_at.isoformat(timespec="seconds"),
+            "dossier_path": state.get("dossier_path", ""),
         }
 
     graph = StateGraph(AgentState)
     graph.add_node("read_profile", read_profile)
     graph.add_node("search_tavily", search_tavily)
     graph.add_node("judge_results", judge_results)
+    graph.add_node("write_dossier", write_dossier)
     graph.add_node("save_result", save_result)
     graph.add_edge(START, "read_profile")
     graph.add_edge("read_profile", "search_tavily")
     graph.add_edge("search_tavily", "judge_results")
-    graph.add_edge("judge_results", "save_result")
+    graph.add_edge("judge_results", "write_dossier")
+    graph.add_edge("write_dossier", "save_result")
     graph.add_edge("save_result", END)
     return graph.compile()
