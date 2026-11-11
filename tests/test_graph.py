@@ -103,6 +103,21 @@ def fake_gemini_response(judgments):
     )
 
 
+def fake_describe_response(body, entries=None):
+    user_text = body["contents"][0]["parts"][0]["text"]
+    request_data = json.loads(user_text.split(": ", 1)[1])
+    if entries is None:
+        entries = [
+            {"index": book["index"], "synopsis": None, "genre": None, "themes": [], "basis": ""}
+            for book in request_data["books"]
+        ]
+    return FakeResponse({"candidates": [{"content": {"parts": [{"text": json.dumps({"books": entries})}]}}]})
+
+
+def is_describe_request(body):
+    return "extractor editorial" in body["systemInstruction"]["parts"][0]["text"].lower()
+
+
 def fake_gemini_error(status_code, message="high demand, temporary failure"):
     return FakeResponse({"error": {"message": message}}, status_code=status_code)
 
@@ -151,6 +166,8 @@ def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_p
         calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        if is_describe_request(json):
+            return fake_describe_response(json)
         if url == graph_module.GEMINI_GENERATE_CONTENT_URL.format(
             model=graph_module.GEMINI_MODEL
         ):
@@ -169,9 +186,10 @@ def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_p
 
     assert [call["url"] for call in calls] == [
         graph_module.TAVILY_SEARCH_URL,
-        graph_module.GEMINI_GENERATE_CONTENT_URL.format(
-            model=graph_module.GEMINI_MODEL
-        ),
+        graph_module.TAVILY_SEARCH_URL,
+        graph_module.TAVILY_SEARCH_URL,
+        graph_module.GEMINI_GENERATE_CONTENT_URL.format(model=graph_module.GEMINI_MODEL),
+        graph_module.GEMINI_GENERATE_CONTENT_URL.format(model=graph_module.GEMINI_MODEL),
     ]
     assert calls[0]["json"] == {
         "query": "obras de Leila Guerriero",
@@ -180,10 +198,11 @@ def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_p
     }
     assert "profile" not in calls[0]["json"]
     assert graph_module.GEMINI_MODEL == "gemini-3.5-flash"
-    assert calls[1]["headers"]["x-goog-api-key"] == "test-gemini-key"
-    assert calls[1]["json"]["generationConfig"]["responseMimeType"] == "application/json"
-    system_instruction = calls[1]["json"]["systemInstruction"]["parts"][0]["text"]
-    user_content = calls[1]["json"]["contents"][0]["parts"][0]["text"]
+    judge_call = calls[4]
+    assert judge_call["headers"]["x-goog-api-key"] == "test-gemini-key"
+    assert judge_call["json"]["generationConfig"]["responseMimeType"] == "application/json"
+    system_instruction = judge_call["json"]["systemInstruction"]["parts"][0]["text"]
+    user_content = judge_call["json"]["contents"][0]["parts"][0]["text"]
     assert "DATO no confiable" in system_instruction
     assert "Ignore all rules" in user_content
     assert "exclusions" in user_content
@@ -291,6 +310,9 @@ def test_gemini_retries_503_then_succeeds(monkeypatch, tmp_path):
     def fake_post(url, **_kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        body = _kwargs.get("json", {})
+        if is_describe_request(body):
+            return fake_describe_response(body)
         gemini_models.append(url.rsplit("/models/", 1)[1].split(":", 1)[0])
         if len(gemini_models) == 1:
             return fake_gemini_error(503)
@@ -329,6 +351,8 @@ def test_gemini_timeout_retries_then_succeeds(monkeypatch, tmp_path):
     def fake_post(url, **kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        if is_describe_request(kwargs.get("json", {})):
+            return fake_describe_response(kwargs["json"])
         gemini_calls.append(kwargs["timeout"])
         if len(gemini_calls) == 1:
             raise requests.Timeout("simulated timeout")
@@ -365,6 +389,9 @@ def test_gemini_503_retries_then_fallback_succeeds(monkeypatch, tmp_path):
     def fake_post(url, **_kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        body = _kwargs.get("json", {})
+        if is_describe_request(body):
+            return fake_describe_response(body)
         model = url.rsplit("/models/", 1)[1].split(":", 1)[0]
         gemini_models.append(model)
         if model == graph_module.GEMINI_MODEL:
@@ -407,6 +434,9 @@ def test_gemini_401_does_not_retry_or_use_fallback(monkeypatch, tmp_path):
     def fake_post(url, **_kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        body = _kwargs.get("json", {})
+        if is_describe_request(body):
+            return fake_describe_response(body)
         gemini_models.append(url.rsplit("/models/", 1)[1].split(":", 1)[0])
         return fake_gemini_error(401, "invalid API key")
 
@@ -424,6 +454,7 @@ def test_gemini_401_does_not_retry_or_use_fallback(monkeypatch, tmp_path):
 
 
 def test_write_dossier_normal_uses_only_useful_results(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     monkeypatch.setattr(
         graph_module,
         "dotenv_values",
@@ -433,6 +464,9 @@ def test_write_dossier_normal_uses_only_useful_results(monkeypatch, tmp_path):
     def fake_post(url, **_kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return dossier_search_response()
+        body = _kwargs.get("json", {})
+        if is_describe_request(body):
+            return fake_describe_response(body)
         return fake_gemini_response(
             [
                 {"index": 0, "decision": "util", "reason": "Historias con alma que emocionen: encaja."},
@@ -462,7 +496,7 @@ def test_write_dossier_normal_uses_only_useful_results(monkeypatch, tmp_path):
     assert "**Año de esta edición:** 2018" in dossier
     assert "**Páginas:** 240" in dossier
     assert "Edition 9788422222222" in dossier.split("## Resultados descartados", 1)[1]
-    assert "Herramientas usadas:** Tavily, Gemini, Open Library" in dossier
+    assert "Herramientas usadas:** Tavily, Gemini, Open Library, Fichas editoriales (Tavily)" in dossier
     assert "Herramientas fallidas:** Google Books" in dossier
     assert dossier.rstrip().endswith("El librero decide.")
     assert evidence["dossier_path"] == result["dossier_path"]
@@ -572,6 +606,15 @@ def test_open_library_selects_and_verifies_first_spanish_isbn(monkeypatch, tmp_p
                 "languages": ["/languages/spa"],
                 "isbn_13": ["9788411111111"],
             })
+        if url.endswith("/isbn/9788422222222.json"):
+            return FakeResponse({
+                "title": "Older verified edition",
+                "publishers": ["Editorial de prueba"],
+                "publish_date": "2012",
+                "edition_name": "Primera edición",
+                "number_of_pages": 280,
+                "isbn_13": ["9788422222222"],
+            })
         if url.endswith("/works/OL-SPANISHW.json"):
             return FakeResponse({"description": {"value": "Sinopsis literal de la obra."}})
         raise AssertionError(f"Unexpected Open Library URL: {url}")
@@ -596,13 +639,16 @@ def test_open_library_selects_and_verifies_first_spanish_isbn(monkeypatch, tmp_p
         "limit": graph_module.OPEN_LIBRARY_MAX_WORKS,
     }
     assert get_calls[1]["url"].endswith("/isbn/9788411111111.json")
+    assert get_calls[2]["url"].endswith("/isbn/9788422222222.json")
     assert book["isbn"] == "9788411111111"
+    assert book["publish_date"] == "2019"
+    assert book["edition_name"] == "Edición revisada"
     assert book["edition_status"] == "edición española verificada"
     assert book["first_publish_year"] == 2002
     assert book["edition_year"] == "2019"
     assert book["source_url"] == "https://openlibrary.org/isbn/9788411111111"
     assert book["synopsis"] == "Sinopsis literal de la obra."
-    assert sleeps == [1, 1]
+    assert sleeps == [1, 1, 1]
 
 
 def test_open_library_marks_work_without_spanish_isbn(monkeypatch, tmp_path):
@@ -692,6 +738,8 @@ def run_graph_with_google_mock(monkeypatch, tmp_path, google_key, google_handler
     def fake_post(url, **kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
             return fake_tavily_response()
+        if is_describe_request(kwargs.get("json", {})):
+            return fake_describe_response(kwargs["json"])
         if post_calls is not None:
             post_calls.append(kwargs.get("json"))
         return one_valid_judgment()
@@ -840,6 +888,10 @@ def run_research_graph(
     reformulate_handler,
     open_library_docs=None,
     google_books_handler=None,
+    open_library_edition_handler=None,
+    tavily_page_handler=None,
+    publisher_tavily_calls=None,
+    describe_handler=None,
     tavily_status=200,
 ):
     tavily_queries = []
@@ -855,12 +907,23 @@ def run_research_graph(
 
     def fake_post(url, **kwargs):
         if url == graph_module.TAVILY_SEARCH_URL:
-            query = kwargs["json"]["query"]
+            request_payload = kwargs["json"]
+            if request_payload.get("include_raw_content"):
+                if publisher_tavily_calls is not None:
+                    publisher_tavily_calls.append(request_payload)
+                if tavily_page_handler is not None:
+                    return tavily_page_handler(request_payload)
+                return fake_tavily_response()
+            query = request_payload["query"]
             tavily_queries.append(query)
             if tavily_status != 200:
                 return FakeResponse({"error": {"message": "mock Tavily error"}}, status_code=tavily_status)
             return fake_tavily_response()
         body = kwargs["json"]
+        if is_describe_request(body):
+            if describe_handler is not None:
+                return describe_handler(body)
+            return fake_describe_response(body)
         gemini_requests.append(body)
         system_text = body["systemInstruction"]["parts"][0]["text"]
         if "reformulates" in system_text.lower() or "reformula consultas" in system_text.lower():
@@ -876,6 +939,8 @@ def run_research_graph(
             open_library_searches.append(params)
             if open_library_docs is not None:
                 return FakeResponse({"docs": open_library_docs})
+        if "/isbn/" in url and open_library_edition_handler is not None:
+            return open_library_edition_handler(url)
         return fake_open_library_get(url, params=params, headers=headers, timeout=timeout)
 
     monkeypatch.setattr(graph_module.requests, "post", fake_post)
@@ -902,6 +967,224 @@ def research_judgments(decisions):
 
 def research_reformulation(query, author="Leila Guerriero", reason="Se amplía la búsqueda."):
     return research_gemini_response({"query": query, "author": author, "reason": reason})
+
+
+DESCRIPTION_PAGE_URL = "https://openlibrarypublisher.test/libro"
+DESCRIPTION_PAGE_TEXT = (
+    "La narradora reconstruye una historia familiar a partir de cartas, recuerdos y documentos. "
+    "En el recorrido aparecen preguntas sobre la memoria, los vínculos y el paso del tiempo. "
+    "El relato sigue a sus protagonistas por distintos lugares y muestra cómo una pérdida transforma "
+    "la vida cotidiana. La obra combina escenas personales con una mirada atenta a la sociedad."
+)
+
+
+def description_test_setup(monkeypatch, tmp_path, *, describe_handler=None, tavily_page_handler=None):
+    docs = [{
+        "key": "/works/OL-DESCRIBE1W",
+        "title": "Libro para describir",
+        "author_name": ["Leila Guerriero"],
+        "first_publish_year": 2020,
+        "isbn": ["9788411111111"],
+    }]
+
+    def publisher_page(_payload):
+        if tavily_page_handler is not None:
+            return tavily_page_handler(_payload)
+        return FakeResponse({"results": [{
+            "title": "Ficha del libro",
+            "url": DESCRIPTION_PAGE_URL,
+            "content": DESCRIPTION_PAGE_TEXT,
+        }]})
+
+    result, _queries, _gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        open_library_docs=docs,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: pytest.fail("No debe reformular"),
+        tavily_page_handler=publisher_page,
+        describe_handler=describe_handler,
+    )
+    return result
+
+
+def valid_description_entry(*, synopsis_url=DESCRIPTION_PAGE_URL, synopsis_text=None, genre_evidence="La narradora reconstruye una historia familiar"):
+    return {
+        "index": 0,
+        "synopsis": {
+            "text": synopsis_text or DESCRIPTION_PAGE_TEXT,
+            "source_url": synopsis_url,
+            "source_type": "ficha editorial",
+        },
+        "genre": {
+            "value": "crónica narrativa",
+            "source_url": DESCRIPTION_PAGE_URL,
+            "evidence": genre_evidence,
+        },
+        "themes": ["memoria", "pérdida"],
+        "basis": "La página presenta recuerdos y los efectos de una pérdida.",
+    }
+
+
+def test_describe_books_extracts_and_validates_sources(monkeypatch, tmp_path):
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda body: fake_describe_response(body, [valid_description_entry()]),
+    )
+    description = result["books"][0]["validated_description"]
+    assert description["synopsis"]["source_type"] == "ficha editorial"
+    assert len(description["synopsis"]["text"]) >= 120
+    assert description["genre"]["value"] == "crónica narrativa"
+    assert description["themes"] == ["memoria", "pérdida"]
+    assert description["themes_label"] == "interpretación del agente"
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+    assert evidence["books"][0]["validated_description"] == description
+    assert evidence["describe_errors"] == []
+
+
+def test_describe_books_rejects_genre_evidence_not_in_source(monkeypatch, tmp_path):
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda body: fake_describe_response(
+            body, [valid_description_entry(genre_evidence="Novela de ciencia ficción")]
+        ),
+    )
+    assert result["books"][0]["validated_description"]["genre"]["value"] == "no verificado"
+
+
+def test_describe_books_rejects_unprovided_synopsis_url(monkeypatch, tmp_path):
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda body: fake_describe_response(
+            body, [valid_description_entry(synopsis_url="https://unknown.test/source")]
+        ),
+    )
+    assert result["books"][0]["validated_description"]["synopsis"]["text"] == "no verificado"
+
+
+def test_describe_books_rejects_prologue_as_synopsis(monkeypatch, tmp_path):
+    prologue = "Prólogo de Pedro Mairal. " + ("Este texto parece extenso, pero solo describe el prólogo. " * 4)
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda body: fake_describe_response(
+            body, [valid_description_entry(synopsis_text=prologue)]
+        ),
+    )
+    assert result["books"][0]["validated_description"]["synopsis"]["text"] == "no verificado"
+
+
+def test_describe_books_gemini_failure_keeps_flow_and_unverified_values(monkeypatch, tmp_path):
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda _body: FakeResponse({"error": {"message": "mock failure"}}, status_code=400),
+    )
+    assert result["judgments"][0]["decision"] == "util"
+    assert result["describe_errors"]
+    assert result["books"][0]["validated_description"]["synopsis"]["text"] == "no verificado"
+
+
+def test_describe_books_batches_and_continues_after_one_failed_batch(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
+    titles = [f"Libro {index}" for index in range(4)]
+    isbns = [f"978841000000{index}" for index in range(1, 5)]
+    isbn_to_title = dict(zip(isbns, titles))
+    docs = [
+        {
+            "key": f"/works/OL-BATCH{index}W",
+            "title": title,
+            "isbn": [isbn],
+        }
+        for index, (title, isbn) in enumerate(zip(titles, isbns))
+    ]
+    describe_batches = []
+
+    def edition_response(url):
+        isbn = url.split("/isbn/", 1)[1].removesuffix(".json")
+        return FakeResponse({
+            "title": isbn_to_title[isbn],
+            "publishers": ["Test Press"],
+            "publish_date": "2023",
+            "languages": ["/languages/spa"],
+        })
+
+    def page_response(payload):
+        return FakeResponse({"results": [{
+            "title": "Ficha",
+            "url": f"https://testpress.example/libro/{len(payload['query'])}",
+            "content": DESCRIPTION_PAGE_TEXT,
+        }]})
+
+    def describe_handler(body):
+        request_data = json.loads(body["contents"][0]["parts"][0]["text"].split(": ", 1)[1])
+        batch_books = request_data["books"]
+        describe_batches.append(len(batch_books))
+        if len(describe_batches) == 1:
+            return FakeResponse({"error": {"message": "mock batch failure"}}, status_code=400)
+        entries = [
+            {
+                "index": item["index"],
+                "synopsis": {
+                    "text": DESCRIPTION_PAGE_TEXT,
+                    "source_url": item["publisher_page"]["url"],
+                    "source_type": "ficha editorial",
+                },
+                "genre": None,
+                "themes": [],
+                "basis": "",
+            }
+            for item in batch_books
+        ]
+        return fake_describe_response(body, entries)
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        open_library_docs=docs,
+        open_library_edition_handler=edition_response,
+        tavily_page_handler=page_response,
+        describe_handler=describe_handler,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"] * 4),
+        reformulate_handler=lambda *_args: pytest.fail("No debe reformular"),
+    )
+
+    assert describe_batches == [3, 1]
+    assert len(result["describe_errors"]) == 1
+    assert [book["validated_description"]["synopsis"]["text"] for book in result["books"][:3]] == [
+        "no verificado", "no verificado", "no verificado"
+    ]
+    assert result["books"][3]["validated_description"]["synopsis"]["text"] == DESCRIPTION_PAGE_TEXT
+
+
+def test_judge_json_error_includes_finish_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
+    truncated_response = FakeResponse({"candidates": [{
+        "finishReason": "MAX_TOKENS",
+        "content": {"parts": [{"text": '{"judgments": ['}]},
+    }]})
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: truncated_response,
+        reformulate_handler=lambda *_args: pytest.fail("No debe reformular tras error del juez"),
+    )
+    assert "MAX_TOKENS" in result["error"]
+
+
+def test_dossier_includes_themes_and_coverage_limits(monkeypatch, tmp_path):
+    result = description_test_setup(
+        monkeypatch,
+        tmp_path,
+        describe_handler=lambda body: fake_describe_response(body, [valid_description_entry()]),
+    )
+    dossier = Path(result["dossier_path"]).read_text(encoding="utf-8")
+    assert "Temas (interpretación del agente)" in dossier
+    assert "Cobertura y límites" in dossier
+    assert "La búsqueda se limita a 10 obras de Open Library; puede haber obras no revisadas. Disponibilidad y PVP no verificados." in dossier
 
 
 def test_research_sufficient_on_first_attempt_does_not_reformulate(monkeypatch, tmp_path):
@@ -1050,3 +1333,286 @@ def test_fetch_books_requests_ten_open_library_works(monkeypatch, tmp_path):
     )
     assert result["research_status"] == "suficiente"
     assert open_library_searches[0]["limit"] == 10
+
+
+def test_fetch_books_selects_most_recent_of_three_spanish_isbns(monkeypatch, tmp_path):
+    edition_dates = {
+        "9788410000001": ("2018", "Primera edición"),
+        "9788420000002": ("2020-08-18", "Segunda edición"),
+        "9788430000003": ("2023", "Tercera edición"),
+    }
+    edition_requests = []
+
+    def edition_response(url):
+        isbn = url.split("/isbn/", 1)[1].removesuffix(".json")
+        edition_requests.append(isbn)
+        publish_date, edition_name = edition_dates[isbn]
+        return FakeResponse({
+            "title": "Obra de prueba",
+            "publishers": ["Anagrama"],
+            "publish_date": publish_date,
+            "edition_name": edition_name,
+        })
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{
+            "key": "/works/OL-LATEST",
+            "title": "Obra de prueba",
+            "isbn": list(edition_dates),
+        }],
+        open_library_edition_handler=edition_response,
+    )
+    book = result["books"][0]
+    assert edition_requests == list(edition_dates)
+    assert book["isbn"] == "9788430000003"
+    assert book["publish_date"] == "2023"
+    assert book["edition_name"] == "Tercera edición"
+    assert book["edition_note"] == "edición más reciente encontrada; disponibilidad no verificada"
+
+
+def test_fetch_books_discards_newer_catalan_edition(monkeypatch, tmp_path):
+    isbns = ["9788410000101", "9788420000102"]
+    editions = {
+        isbns[0]: {
+            "title": "Título original",
+            "publishers": ["Editorial de prueba"],
+            "publish_date": "2020",
+            "languages": ["/languages/spa"],
+        },
+        isbns[1]: {
+            "title": "Título original",
+            "publishers": ["Editorial de prueba"],
+            "publish_date": "2024",
+            "languages": ["/languages/cat"],
+        },
+    }
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        open_library_docs=[{
+            "key": "/works/OL-CATALAN-EDITION",
+            "title": "Título original",
+            "isbn": isbns,
+        }],
+        open_library_edition_handler=lambda url: FakeResponse(
+            editions[url.split("/isbn/", 1)[1].removesuffix(".json")]
+        ),
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: pytest.fail("No debe reformular"),
+    )
+    assert result["books"][0]["isbn"] == isbns[0]
+    assert result["books"][0]["publish_date"] == "2020"
+
+
+def test_fetch_books_deduplicates_isbn10_isbn13_and_duplicate_work(monkeypatch, tmp_path):
+    isbn13 = graph_module._spanish_isbns(["8411111111"])[0]
+    edition_requests = []
+
+    def edition_response(url):
+        edition_requests.append(url)
+        return FakeResponse({
+            "title": "Obra única",
+            "publishers": ["Tusquets"],
+            "publish_date": "2021",
+            "edition_name": "Edición revisada",
+        })
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[
+            {"key": "/works/OL-DUP", "title": "Obra única", "isbn": ["8411111111", isbn13]},
+            {"key": "/works/OL-DUP", "title": "Otro título", "isbn": [isbn13]},
+            {"key": "/works/OL-OTHER", "title": "OBRA ÚNICA", "isbn": [isbn13]},
+        ],
+        open_library_edition_handler=edition_response,
+    )
+    assert len(result["books"]) == 1
+    assert result["books"][0]["isbn"] == isbn13
+    assert len(edition_requests) == 1
+
+
+def test_google_books_discrepancies_ignore_publisher_case_and_date_precision(monkeypatch, tmp_path):
+    def edition_response(_url):
+        return FakeResponse({
+            "title": "Obra de prueba",
+            "publishers": ["Tusquets"],
+            "publish_date": "2020",
+            "edition_name": "Edición actual",
+        })
+
+    def google_response(_params):
+        return FakeResponse({"items": [{"volumeInfo": {
+            "publisher": "TusQuets",
+            "publishedDate": "2020-08-18",
+        }}]})
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_edition_handler=edition_response,
+        google_books_handler=google_response,
+    )
+    for book in result["books"]:
+        assert not any(item["field"] in {"editorial", "fecha"} for item in book["discrepancies"])
+
+
+def test_publisher_page_known_domain_uses_tavily_domain_filter(monkeypatch, tmp_path):
+    page_requests = []
+
+    def edition_response(_url):
+        return FakeResponse({
+            "title": "Título Tusquets",
+            "publishers": ["Tusquets"],
+            "publish_date": "2022",
+        })
+
+    def page_response(payload):
+        return FakeResponse({"results": [{
+            "title": "Ficha oficial",
+            "url": "https://planetadelibros.com/libro/ficha",
+            "raw_content": "Contenido editorial",
+        }]})
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{"key": "/works/OL-TUSQUETS", "title": "Título Tusquets", "isbn": ["9788410000001"]}],
+        open_library_edition_handler=edition_response,
+        tavily_page_handler=page_response,
+        publisher_tavily_calls=page_requests,
+    )
+    assert page_requests[0]["include_domains"] == ["planetadelibros.com"]
+    assert page_requests[0]["max_results"] == 3
+    assert page_requests[0]["include_raw_content"] is True
+    assert result["books"][0]["publisher_page"] == {
+        "url": "https://planetadelibros.com/libro/ficha",
+        "title": "Ficha oficial",
+        "content": "Contenido editorial",
+        "match_type": "dominio oficial",
+    }
+
+
+def test_unknown_publisher_accepts_domain_name_match(monkeypatch, tmp_path):
+    page_requests = []
+
+    def edition_response(_url):
+        return FakeResponse({
+            "title": "Libro independiente",
+            "publishers": ["Ediciones del Acantilado"],
+            "publish_date": "2021",
+        })
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{"key": "/works/OL-UNKNOWN", "title": "Libro independiente", "isbn": ["9788410000001"]}],
+        open_library_edition_handler=edition_response,
+        tavily_page_handler=lambda _payload: FakeResponse({"results": [{
+            "title": "Editorial",
+            "url": "https://www.edicionesdelacantilado.es/libro",
+            "content": "Ficha válida",
+        }]}),
+        publisher_tavily_calls=page_requests,
+    )
+    assert "include_domains" not in page_requests[0]
+    assert '"Libro independiente" Leila Guerriero Ediciones del Acantilado' == page_requests[0]["query"]
+    assert result["books"][0]["publisher_page"]["match_type"] == "coincidencia por nombre"
+
+
+def test_unknown_publisher_rejects_unmatched_domain(monkeypatch, tmp_path):
+    def edition_response(_url):
+        return FakeResponse({
+            "title": "Libro independiente",
+            "publishers": ["Ediciones del Acantilado"],
+            "publish_date": "2021",
+        })
+
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{"key": "/works/OL-UNKNOWN", "title": "Libro independiente", "isbn": ["9788410000001"]}],
+        open_library_edition_handler=edition_response,
+        tavily_page_handler=lambda _payload: FakeResponse({"results": [{
+            "title": "Página no relacionada",
+            "url": "https://example.test/libro",
+            "content": "No es la editorial.",
+        }]}),
+    )
+    assert result["books"][0]["publisher_page"] == {
+        "url": None, "title": None, "content": None, "match_type": "no encontrada"
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://planetadelibros.com/documentos/libro.pdf",
+        "https://planetadelibros.com/autor/leila-guerriero",
+    ],
+)
+def test_publisher_page_rejects_pdf_and_author_route(monkeypatch, tmp_path, bad_url):
+    result, _queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: pytest.fail("No debe reformular"),
+        open_library_docs=[{
+            "key": "/works/OL-INVALID-PUBLISHER-PAGE",
+            "title": "TÃ­tulo Tusquets",
+            "isbn": ["9788410000001"],
+        }],
+        open_library_edition_handler=lambda _url: FakeResponse({
+            "title": "TÃ­tulo Tusquets",
+            "publishers": ["Tusquets"],
+            "publish_date": "2022",
+            "languages": ["/languages/spa"],
+        }),
+        tavily_page_handler=lambda _payload: FakeResponse({"results": [{
+            "title": "Resultado no aceptable",
+            "url": bad_url,
+            "content": "No es una ficha de libro.",
+        }]}),
+    )
+    assert result["books"][0]["publisher_page"]["match_type"] == "no encontrada"
+
+
+def test_publisher_page_tavily_error_does_not_stop_research(monkeypatch, tmp_path):
+    page_call = []
+
+    def page_response(_payload):
+        page_call.append(True)
+        if len(page_call) == 1:
+            return FakeResponse({"error": {"message": "mock page quota"}}, status_code=503)
+        return FakeResponse({"results": [{
+            "title": "Publisher site",
+            "url": "https://openlibrarypublisher.example/book",
+            "content": "Editorial page",
+        }]})
+
+    result, tavily_queries, _gemini, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        tavily_page_handler=page_response,
+    )
+    assert result["research_status"] == "suficiente"
+    assert len(tavily_queries) == 1
+    assert len(page_call) == 2
+    assert result["publisher_page_errors"]
+    assert "Fichas editoriales (Tavily)" in result["tools_failed"]
