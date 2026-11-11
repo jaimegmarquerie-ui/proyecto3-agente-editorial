@@ -136,6 +136,7 @@ def dossier_search_response(first_content="Fragmento de prueba sin ficha bibliog
 
 
 def test_graph_judges_results_with_profile_and_saves_evidence(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     calls = []
     monkeypatch.setattr(
         graph_module,
@@ -273,6 +274,7 @@ def test_tavily_failure_skips_judging_and_saves_error(monkeypatch, tmp_path):
 
 
 def test_gemini_retries_503_then_succeeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     monkeypatch.setattr(
         graph_module,
         "dotenv_values",
@@ -310,6 +312,7 @@ def test_gemini_retries_503_then_succeeds(monkeypatch, tmp_path):
 
 
 def test_gemini_timeout_retries_then_succeeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     monkeypatch.setattr(
         graph_module,
         "dotenv_values",
@@ -345,6 +348,7 @@ def test_gemini_timeout_retries_then_succeeds(monkeypatch, tmp_path):
 
 
 def test_gemini_503_retries_then_fallback_succeeds(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     monkeypatch.setattr(
         graph_module,
         "dotenv_values",
@@ -589,7 +593,7 @@ def test_open_library_selects_and_verifies_first_spanish_isbn(monkeypatch, tmp_p
     assert get_calls[0]["params"] == {
         "author": "Leila Guerriero",
         "fields": "key,title,first_publish_year,isbn",
-        "limit": 5,
+        "limit": graph_module.OPEN_LIBRARY_MAX_WORKS,
     }
     assert get_calls[1]["url"].endswith("/isbn/9788411111111.json")
     assert book["isbn"] == "9788411111111"
@@ -763,6 +767,7 @@ def test_google_books_missing_key_logs_error_and_continues(monkeypatch, tmp_path
 
 
 def test_google_books_retries_429_twice_then_records_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(graph_module, "MAX_SEARCH_ATTEMPTS", 1)
     calls = []
     delays = []
 
@@ -820,3 +825,228 @@ def test_judge_request_includes_google_books_description_and_categories(monkeypa
     assert "Los datos de Google Books son secundarios; sus categorías son comerciales y no equivalen al género." in (
         judge_body["systemInstruction"]["parts"][0]["text"]
     )
+
+
+def research_gemini_response(payload):
+    return FakeResponse({"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]})
+
+
+def run_research_graph(
+    monkeypatch,
+    tmp_path,
+    *,
+    initial_state=None,
+    judge_handler,
+    reformulate_handler,
+    open_library_docs=None,
+    google_books_handler=None,
+    tavily_status=200,
+):
+    tavily_queries = []
+    gemini_requests = []
+    open_library_searches = []
+    env = {
+        "TAVILY_API_KEY": "mock-tavily",
+        "GEMINI_API_KEY": "mock-gemini",
+        "GOOGLE_BOOKS_API_KEY": "mock-google-books",
+    }
+    monkeypatch.setattr(graph_module, "dotenv_values", lambda _path: env)
+    monkeypatch.setattr(graph_module.time, "sleep", lambda _seconds: None)
+
+    def fake_post(url, **kwargs):
+        if url == graph_module.TAVILY_SEARCH_URL:
+            query = kwargs["json"]["query"]
+            tavily_queries.append(query)
+            if tavily_status != 200:
+                return FakeResponse({"error": {"message": "mock Tavily error"}}, status_code=tavily_status)
+            return fake_tavily_response()
+        body = kwargs["json"]
+        gemini_requests.append(body)
+        system_text = body["systemInstruction"]["parts"][0]["text"]
+        if "reformulates" in system_text.lower() or "reformula consultas" in system_text.lower():
+            return reformulate_handler(len([request for request in gemini_requests if "reformul" in request["systemInstruction"]["parts"][0]["text"].lower()]), body)
+        return judge_handler(len([request for request in gemini_requests if "clasificador editorial" in request["systemInstruction"]["parts"][0]["text"].lower()]), body)
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url == graph_module.GOOGLE_BOOKS_URL:
+            if google_books_handler is not None:
+                return google_books_handler(params)
+            return FakeResponse({"items": []})
+        if url == graph_module.OPEN_LIBRARY_SEARCH_URL:
+            open_library_searches.append(params)
+            if open_library_docs is not None:
+                return FakeResponse({"docs": open_library_docs})
+        return fake_open_library_get(url, params=params, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(graph_module.requests, "post", fake_post)
+    monkeypatch.setattr(graph_module.requests, "get", fake_get)
+    result = graph_module.build_graph(evidence_dir=tmp_path).invoke(
+        initial_state
+        or {"profile_path": str(PROFILE_PATH), "query": "obras de Leila Guerriero", "author": "Leila Guerriero"}
+    )
+    return result, tavily_queries, gemini_requests, open_library_searches
+
+
+def research_judgments(decisions):
+    reasons = [
+        "Historias con alma que emocionen: encaja con el perfil.",
+        "Narrativa de ficción: encaja con el perfil.",
+    ]
+    return research_gemini_response(
+        {"judgments": [
+            {"index": index, "decision": decision, "reason": reasons[index % len(reasons)]}
+            for index, decision in enumerate(decisions)
+        ]}
+    )
+
+
+def research_reformulation(query, author="Leila Guerriero", reason="Se amplía la búsqueda."):
+    return research_gemini_response({"query": query, "author": author, "reason": reason})
+
+
+def test_research_sufficient_on_first_attempt_does_not_reformulate(monkeypatch, tmp_path):
+    def no_reformulation(_attempt, _body):
+        raise AssertionError("No debe reformular una investigación suficiente")
+
+    result, tavily_queries, gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=no_reformulation,
+    )
+    assert result["search_attempts"] == 1
+    assert result["research_status"] == "suficiente"
+    assert len(result["search_history"]) == 1
+    assert tavily_queries == ["obras de Leila Guerriero"]
+    assert len(gemini_requests) == 1
+
+
+def test_google_books_404_does_not_block_sufficient_research(monkeypatch, tmp_path):
+    google_calls = []
+
+    def google_404_for_one_book(params):
+        google_calls.append(params)
+        if params["q"] == "isbn:9788411111111":
+            return FakeResponse({"error": {"message": "not found"}}, status_code=404)
+        return FakeResponse({"items": []})
+
+    def no_reformulation(_attempt, _body):
+        raise AssertionError("Google Books 404 no debe disparar una reformulación")
+
+    result, tavily_queries, _gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=no_reformulation,
+        google_books_handler=google_404_for_one_book,
+    )
+    assert len(google_calls) == 2
+    assert len(tavily_queries) == 1
+    assert result["research_status"] == "suficiente"
+    assert result["search_attempts"] == 1
+    assert result["google_books_errors"]
+
+
+def test_research_reformulates_then_second_attempt_is_sufficient(monkeypatch, tmp_path):
+    result, tavily_queries, _gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda attempt, _body: research_judgments(
+            ["util", "no_util"] if attempt == 1 else ["util", "util"]
+        ),
+        reformulate_handler=lambda _attempt, _body: research_reformulation(
+            "Leila Guerriero crónicas y testimonios"
+        ),
+    )
+    assert result["search_attempts"] == 2
+    assert result["research_status"] == "suficiente"
+    assert tavily_queries == [
+        "obras de Leila Guerriero",
+        "Leila Guerriero crónicas y testimonios",
+    ]
+    assert [entry["decision"] for entry in result["search_history"]] == ["reformular", "continuar"]
+
+
+def test_research_stops_after_two_insufficient_attempts_and_reports_it(monkeypatch, tmp_path):
+    result, tavily_queries, _gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "no_util"]),
+        reformulate_handler=lambda _attempt, _body: research_reformulation(
+            "Leila Guerriero periodismo narrativo"
+        ),
+    )
+    dossier = Path(result["dossier_path"]).read_text(encoding="utf-8")
+    assert result["search_attempts"] == 2
+    assert result["research_status"] == "insuficiente_tras_reintentos"
+    assert tavily_queries == [
+        "obras de Leila Guerriero",
+        "Leila Guerriero periodismo narrativo",
+    ]
+    assert result["search_history"][-1]["decision"] == "detener"
+    assert "No se encontraron suficientes libros útiles tras 2 intentos" in dossier
+
+
+def test_reformulation_failure_uses_fallback_for_obras_de_query(monkeypatch, tmp_path):
+    calls = []
+
+    def reformulation_error(attempt, _body):
+        calls.append(attempt)
+        return FakeResponse({"error": {"message": "mock Gemini error"}}, status_code=404)
+
+    result, tavily_queries, _gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        initial_state={"profile_path": str(PROFILE_PATH), "query": "obras de Leila Guerriero"},
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=reformulation_error,
+    )
+    assert calls == [1]
+    assert tavily_queries == [
+        "obras de Leila Guerriero",
+        "libros escritos por Leila Guerriero",
+    ]
+    assert result["author"] == "Leila Guerriero"
+    assert result["search_history"][0]["reason"] == "regla de reserva"
+
+
+def test_tavily_failure_sets_error_status_without_retry(monkeypatch, tmp_path):
+    result, tavily_queries, gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        initial_state={"profile_path": str(PROFILE_PATH), "query": "obras de Leila Guerriero", "author": "Leila Guerriero"},
+        judge_handler=lambda _attempt, _body: research_judgments(["util", "util"]),
+        reformulate_handler=lambda _attempt, _body: research_reformulation("otra consulta"),
+        tavily_status=503,
+    )
+    assert result["search_attempts"] == 1
+    assert result["research_status"] == "error_herramienta"
+    assert len(tavily_queries) == 1
+    assert gemini_requests == []
+
+
+def test_one_useful_book_is_sufficient(monkeypatch, tmp_path):
+    docs = [{"title": "Single candidate", "isbn": []}]
+    result, tavily_queries, gemini_requests, _searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=docs,
+    )
+    assert result["search_attempts"] == 1
+    assert result["research_status"] == "suficiente"
+    assert len(gemini_requests) == 1
+    assert len(tavily_queries) == 1
+
+
+def test_fetch_books_requests_ten_open_library_works(monkeypatch, tmp_path):
+    result, _tavily_queries, _gemini_requests, open_library_searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{"title": "Single candidate", "isbn": []}],
+    )
+    assert result["research_status"] == "suficiente"
+    assert open_library_searches[0]["limit"] == 10
