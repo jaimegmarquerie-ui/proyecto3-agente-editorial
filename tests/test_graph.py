@@ -459,7 +459,7 @@ def test_write_dossier_normal_uses_only_useful_results(monkeypatch, tmp_path):
     assert "**Páginas:** 240" in dossier
     assert "Edition 9788422222222" in dossier.split("## Resultados descartados", 1)[1]
     assert "Herramientas usadas:** Tavily, Gemini, Open Library" in dossier
-    assert "Herramientas fallidas:** ninguna" in dossier
+    assert "Herramientas fallidas:** Google Books" in dossier
     assert dossier.rstrip().endswith("El librero decide.")
     assert evidence["dossier_path"] == result["dossier_path"]
 
@@ -677,3 +677,146 @@ def test_open_library_failure_keeps_tavily_results_and_saves_error(monkeypatch, 
     assert evidence["open_library_errors"] == result["open_library_errors"]
     assert evidence["results"] == result["results"]
     assert Path(result["dossier_path"]).exists()
+
+
+def run_graph_with_google_mock(monkeypatch, tmp_path, google_key, google_handler, post_calls=None):
+    env = {"TAVILY_API_KEY": "test-tavily", "GEMINI_API_KEY": "test-gemini"}
+    if google_key is not None:
+        env["GOOGLE_BOOKS_API_KEY"] = google_key
+    monkeypatch.setattr(graph_module, "dotenv_values", lambda _path: env)
+
+    def fake_post(url, **kwargs):
+        if url == graph_module.TAVILY_SEARCH_URL:
+            return fake_tavily_response()
+        if post_calls is not None:
+            post_calls.append(kwargs.get("json"))
+        return one_valid_judgment()
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url == graph_module.GOOGLE_BOOKS_URL:
+            return google_handler(url, params=params, timeout=timeout)
+        return fake_open_library_get(url, params=params, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(graph_module.requests, "post", fake_post)
+    monkeypatch.setattr(graph_module.requests, "get", fake_get)
+    return graph_module.build_graph(evidence_dir=tmp_path).invoke(
+        {"profile_path": str(PROFILE_PATH), "query": "consulta", "author": "Test Author"}
+    )
+
+
+def test_google_books_success_saves_data_and_discrepancies(monkeypatch, tmp_path):
+    requests_seen = []
+
+    def google_response(_url, params, timeout):
+        requests_seen.append((params, timeout))
+        return FakeResponse({"items": [{"volumeInfo": {
+            "description": "Descripción de Google",
+            "categories": ["History"],
+            "averageRating": 4.2,
+            "ratingsCount": 19,
+            "publishedDate": "2020",
+            "pageCount": 300,
+            "infoLink": "https://books.example/volume",
+            "publisher": "Google Publisher",
+        }}]})
+
+    result = run_graph_with_google_mock(monkeypatch, tmp_path, "secret-google-key", google_response)
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+    book = evidence["books"][0]
+    assert requests_seen[0][0] == {"q": "isbn:9788411111111", "key": "secret-google-key"}
+    assert book["google_books"]["description"] == "Descripción de Google"
+    assert book["google_books"]["categories"] == {
+        "label": "categoría comercial de Google Books", "values": ["History"]
+    }
+    assert book["google_books"]["pageCount"] == 300
+    assert "secret-google-key" not in json.dumps(evidence)
+    assert book["google_books"]["url"] == (
+        f"{graph_module.GOOGLE_BOOKS_URL}?q=isbn:9788411111111"
+    )
+    assert {item["field"] for item in book["discrepancies"]} == {"editorial", "fecha", "páginas"}
+    assert "Google Books" in evidence["tools_used"]
+
+
+def test_google_books_zero_page_count_is_absent(monkeypatch, tmp_path):
+    result = run_graph_with_google_mock(
+        monkeypatch,
+        tmp_path,
+        "secret-google-key",
+        lambda *_args, **_kwargs: FakeResponse({"items": [{"volumeInfo": {"pageCount": 0}}]}),
+    )
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+    assert evidence["books"][0]["google_books"]["pageCount"] is None
+    assert evidence["books"][0]["discrepancies"] == []
+
+
+def test_google_books_missing_key_logs_error_and_continues(monkeypatch, tmp_path):
+    def unexpected_google_call(*_args, **_kwargs):
+        raise AssertionError("Google Books must not be called without its API key")
+
+    result = run_graph_with_google_mock(monkeypatch, tmp_path, None, unexpected_google_call)
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+    assert evidence["google_books_errors"]
+    assert "Falta GOOGLE_BOOKS_API_KEY" in evidence["google_books_errors"][0]
+    assert "secret" not in json.dumps(evidence)
+    assert evidence["books"][0]["isbn"] == "9788411111111"
+    assert "Google Books" in evidence["tools_failed"]
+
+
+def test_google_books_retries_429_twice_then_records_failure(monkeypatch, tmp_path):
+    calls = []
+    delays = []
+
+    def google_response(_url, params, timeout):
+        calls.append(params)
+        return FakeResponse({"error": {"message": "key secret-google-key rejected"}}, status_code=429)
+
+    monkeypatch.setattr(graph_module.time, "sleep", delays.append)
+    result = run_graph_with_google_mock(monkeypatch, tmp_path, "secret-google-key", google_response)
+    evidence = json.loads(Path(result["evidence_path"]).read_text(encoding="utf-8"))
+    assert len(calls) == 3
+    assert delays[-2:] == list(graph_module.GEMINI_RETRY_DELAYS)
+    assert "secret-google-key" not in json.dumps(evidence)
+    assert evidence["google_books_errors"]
+    assert "1 libros sin consultar" in evidence["google_books_errors"][0]
+    assert evidence["google_books_errors"][0].startswith(
+        "Google Books no disponible (HTTP 429 tras reintentos);"
+    )
+    second_book = evidence["books"][1]["google_books"]
+    assert second_book["description"] is None
+    assert second_book["averageRating"] is None
+    assert second_book["pageCount"] is None
+    assert "Google Books" in evidence["tools_failed"]
+
+
+def test_judge_request_includes_google_books_description_and_categories(monkeypatch, tmp_path):
+    judge_requests = []
+    description = "D" * 750
+
+    def google_response(_url, params, timeout):
+        return FakeResponse({"items": [{"volumeInfo": {
+            "description": description,
+            "categories": ["History"],
+        }}]})
+
+    run_graph_with_google_mock(
+        monkeypatch,
+        tmp_path,
+        "secret-google-key",
+        google_response,
+        post_calls=judge_requests,
+    )
+    judge_body = next(
+        body for body in judge_requests
+        if body and "contents" in body
+    )
+    user_text = judge_body["contents"][0]["parts"][0]["text"]
+    payload = json.loads(user_text.split("Datos de perfil y resultados: ", 1)[1])
+    first_book = payload["books"][0]
+    assert first_book["google_books_description"] == description[:600]
+    assert first_book["google_books_categories"] == {
+        "label": "categoría comercial de Google Books",
+        "values": ["History"],
+    }
+    assert "Los datos de Google Books son secundarios; sus categorías son comerciales y no equivalen al género." in (
+        judge_body["systemInstruction"]["parts"][0]["text"]
+    )
