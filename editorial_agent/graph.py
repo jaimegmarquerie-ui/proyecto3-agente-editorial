@@ -32,7 +32,8 @@ OPEN_LIBRARY_USER_AGENT = "proyecto3-agente-editorial (Ironhack student project)
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 MIN_USEFUL_BOOKS = 2
 MAX_SEARCH_ATTEMPTS = 2
-OPEN_LIBRARY_MAX_WORKS = 10
+OPEN_LIBRARY_MAX_WORKS = 5  # default number of works reviewed per run
+OPEN_LIBRARY_MAX_WORKS_LIMIT = 10
 PUBLISHER_DOMAINS_FILE = PROJECT_ROOT / "profiles" / "publisher_domains.json"
 BOOK_FIELD_LABELS = {
     "Autor": ("autor", "autora", "author"),
@@ -244,6 +245,7 @@ class AgentState(TypedDict, total=False):
     profile_path: str
     query: str
     author: str | None
+    max_works: int
     profile: dict[str, Any] | None
     results: list[dict[str, str]]
     books: list[dict[str, Any]]
@@ -266,6 +268,14 @@ class AgentState(TypedDict, total=False):
     evidence_path: str
     dossier_path: str
     created_at_utc: str
+
+
+def _max_works(state: dict[str, Any]) -> int:
+    """Works reviewed per run: state["max_works"] if valid (1-10), else the default."""
+    value = state.get("max_works")
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= OPEN_LIBRARY_MAX_WORKS_LIMIT:
+        return value
+    return OPEN_LIBRARY_MAX_WORKS
 
 
 def build_graph(
@@ -357,6 +367,7 @@ def build_graph(
         author = state.get("author")
         if not author:
             return {"books": [], "open_library_errors": []}
+        max_works = _max_works(state)
 
         request_count = 0
 
@@ -384,7 +395,7 @@ def build_graph(
                 params={
                     "author": author,
                     "fields": "key,title,first_publish_year,isbn",
-                    "limit": OPEN_LIBRARY_MAX_WORKS,
+                    "limit": max_works,
                 },
             )
         except (requests.RequestException, ValueError) as error:
@@ -404,7 +415,7 @@ def build_graph(
         seen_work_keys: set[str] = set()
         seen_title_authors: set[tuple[str, str]] = set()
         seen_edition_isbns: set[str] = set()
-        for document in documents[:OPEN_LIBRARY_MAX_WORKS]:
+        for document in documents[:max_works]:
             if not isinstance(document, dict):
                 continue
 
@@ -1527,7 +1538,7 @@ def build_graph(
             reformulation_reason = "regla de reserva"
             if reformulation_json_finish_reason:
                 reformulation_reason += (
-                    f" (JSON invÃ¡lido; finishReason: {reformulation_json_finish_reason})"
+                    f" (JSON inválido; finishReason: {reformulation_json_finish_reason})"
                 )
 
         useful_count = useful_book_count(state)
@@ -1784,12 +1795,15 @@ def build_graph(
             "Consultas usadas: " + (" → ".join(
                 _markdown_text(item.get("query") or "no verificado") for item in search_history
             ) or "ninguna"),
-            "La búsqueda se limita a 10 obras de Open Library; puede haber obras no revisadas. Disponibilidad y PVP no verificados.",
+            f"La búsqueda se limita a {_max_works(state)} obras de Open Library; puede haber obras no revisadas. Disponibilidad y PVP no verificados.",
             "",
             "El librero decide.",
             "",
         ])
-        dossier_path.write_text("\n".join(lines), encoding="utf-8")
+        # Markdown line breaks: field lines ("**Campo:** valor") end with two spaces
+        # so each field renders on its own line on GitHub and in previews.
+        rendered_lines = [f"{line}  " if line.startswith("**") else line for line in lines]
+        dossier_path.write_text("\n".join(rendered_lines), encoding="utf-8")
         return {
             "dossier_path": str(dossier_path),
             "tools_used": tools_used,

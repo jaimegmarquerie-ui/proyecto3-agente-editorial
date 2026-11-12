@@ -1,8 +1,7 @@
-# Future GTM sprints — DRAFT (updated 10 Nov 2026)
+# Future GTM sprints
 
 > These sprints are **next steps after the MVP**, not work already done.
-> Source: product briefing v3 (Sprint 1 Validate · Sprint 2 Demand · Sprint 3 Economic impact), rewritten in the official format.
-> Economic figures in the briefing are hypotheses, not measured results.
+> Economic figures are hypotheses, not measured results.
 
 ## Sprint 1 — Validate with real bookshops
 

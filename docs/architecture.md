@@ -1,26 +1,40 @@
-# Architecture — happy path (≤10 steps) and failure paths — DRAFT
+# Architecture
+
+## Graph (LangGraph)
 
 ```mermaid
 flowchart TD
-  A[1. CLI trigger<br/>profile.json + query] --> B[2. Validate inputs<br/>profile schema, query type]
-  B -->|invalid| X1[Stop: clear error message]
-  B --> C[3. Verify event if the query claims one<br/>GDELT + Tavily]
-  C -->|not verified| C2[Mark as unverified in state<br/>never present as fact]
-  C --> D[4. Discover sources<br/>Tavily: publisher pages first]
-  C2 --> D
-  D --> E[5. Enrich metadata<br/>Google Books]
-  E --> F[6. Normalize work / edition / ISBN<br/>flag contradictions]
-  F --> G[7. Filter and rank vs profile<br/>LLM, explicit criteria]
-  G --> H[8. Grounding check<br/>every claim has a source URL]
-  H -->|0 reliable records| X2[Report: no verified results + reasons]
-  H --> I[9. Write dossier ≤5 records<br/>samples/ as Markdown + JSON]
-  I --> J[10. Run log: tools called, status, errors]
+  START([Trigger: CLI request + bookshop profile]) --> read_profile
+  read_profile --> search_tavily[search_tavily<br/>web search, counts attempts]
+  search_tavily --> fetch_books[fetch_books<br/>Open Library: 5 works by default (max 10),<br/>latest Spanish edition, dedupe]
+  fetch_books --> fetch_google_books[fetch_google_books<br/>cross-check, discrepancies]
+  fetch_google_books --> fetch_publisher_pages[fetch_publisher_pages<br/>Tavily limited to the publisher's site]
+  fetch_publisher_pages --> describe_books[describe_books<br/>Gemini proposes synopsis, genre, themes<br/>Python validates against sources]
+  describe_books --> judge_results[judge_results<br/>Gemini: useful for this bookshop?]
+  judge_results --> route{route_after_judge}
+  route -->|enough useful books| write_dossier
+  route -->|not enough, attempts < 2| reformulate_query[reformulate_query<br/>Gemini or fallback rule]
+  reformulate_query --> search_tavily
+  route -->|not enough, no attempts left| write_dossier
+  route -->|tool error| write_dossier
+  write_dossier[write_dossier<br/>template, no LLM writing] --> save_result[save_result<br/>evidence JSON]
+  save_result --> END([END])
 ```
 
+**State** (shared dictionary): query, author, profile, search results, books (edition, Google Books data, publisher page, validated description, discrepancies), judgments, attempts and search history, research status, errors per source, tools used/failed, output paths.
+
+**Sufficiency rule:** ≥2 useful books, or at least 1 book found and all of them useful.
+
 ## Failure paths
+
 | Failure | Behaviour |
-|---------|-----------|
-| HTTP 429 / 5xx / timeout | Retry with exponential backoff; if still failing, record `tool_unavailable` in state and continue with partial data, stated in the report |
-| Empty results | Not an error: report says "no results found" for that tool |
-| LLM call fails | Stop with error; never write a dossier without the LLM step's output |
-| Retrieved web text contains instructions | Treated as data only (prompt-injection guard) |
+|---|---|
+| Invalid profile or CLI input | Stop with a clear error; no credits spent |
+| Tavily or judge fails | No retry of the search; dossier marked **NOT FINAL**; no invented results |
+| Gemini 429/503/timeout | Retries with waits, then fallback model |
+| Gemini returns invalid JSON | Error with `finishReason`; describe runs in batches of 3, so one failed batch only affects its books |
+| Google Books 429/503 after retries | Stops calling for the rest of the run; data marked missing |
+| Open Library / publisher page / Google Books error for one book | Recorded in its own error list; the flow continues |
+| Edition language unknown | Accepted with "idioma no verificado" (explicit non-Spanish editions are rejected) |
+| Retrieved text contains instructions | Treated as data only (prompt-injection guard) |
+| Not enough useful books after 2 attempts | Dossier says so honestly ("No se encontraron suficientes libros útiles…") |

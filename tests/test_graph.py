@@ -1184,7 +1184,7 @@ def test_dossier_includes_themes_and_coverage_limits(monkeypatch, tmp_path):
     dossier = Path(result["dossier_path"]).read_text(encoding="utf-8")
     assert "Temas (interpretación del agente)" in dossier
     assert "Cobertura y límites" in dossier
-    assert "La búsqueda se limita a 10 obras de Open Library; puede haber obras no revisadas. Disponibilidad y PVP no verificados." in dossier
+    assert "La búsqueda se limita a 5 obras de Open Library; puede haber obras no revisadas. Disponibilidad y PVP no verificados." in dossier
 
 
 def test_research_sufficient_on_first_attempt_does_not_reformulate(monkeypatch, tmp_path):
@@ -1323,7 +1323,7 @@ def test_one_useful_book_is_sufficient(monkeypatch, tmp_path):
     assert len(tavily_queries) == 1
 
 
-def test_fetch_books_requests_ten_open_library_works(monkeypatch, tmp_path):
+def test_fetch_books_requests_five_open_library_works_by_default(monkeypatch, tmp_path):
     result, _tavily_queries, _gemini_requests, open_library_searches = run_research_graph(
         monkeypatch,
         tmp_path,
@@ -1332,7 +1332,31 @@ def test_fetch_books_requests_ten_open_library_works(monkeypatch, tmp_path):
         open_library_docs=[{"title": "Single candidate", "isbn": []}],
     )
     assert result["research_status"] == "suficiente"
-    assert open_library_searches[0]["limit"] == 10
+    assert open_library_searches[0]["limit"] == 5
+
+
+def test_fetch_books_respects_max_works_from_state(monkeypatch, tmp_path):
+    result, _tavily_queries, _gemini_requests, open_library_searches = run_research_graph(
+        monkeypatch,
+        tmp_path,
+        initial_state={
+            "profile_path": str(PROFILE_PATH),
+            "query": "obras de Leila Guerriero",
+            "author": "Leila Guerriero",
+            "max_works": 3,
+        },
+        judge_handler=lambda _attempt, _body: research_judgments(["util"]),
+        reformulate_handler=lambda *_args: (_ for _ in ()).throw(AssertionError("No debe reformular")),
+        open_library_docs=[{"title": "Single candidate", "isbn": []}],
+    )
+    assert result["research_status"] == "suficiente"
+    assert open_library_searches[0]["limit"] == 3
+
+
+def test_cli_rejects_max_works_out_of_range(capsys):
+    from editorial_agent.cli import main
+    with pytest.raises(SystemExit):
+        main(["--profile", "p.json", "--query", "q", "--max-works", "11"])
 
 
 def test_fetch_books_selects_most_recent_of_three_spanish_isbns(monkeypatch, tmp_path):
@@ -1573,11 +1597,11 @@ def test_publisher_page_rejects_pdf_and_author_route(monkeypatch, tmp_path, bad_
         reformulate_handler=lambda *_args: pytest.fail("No debe reformular"),
         open_library_docs=[{
             "key": "/works/OL-INVALID-PUBLISHER-PAGE",
-            "title": "TÃ­tulo Tusquets",
+            "title": "Título Tusquets",
             "isbn": ["9788410000001"],
         }],
         open_library_edition_handler=lambda _url: FakeResponse({
-            "title": "TÃ­tulo Tusquets",
+            "title": "Título Tusquets",
             "publishers": ["Tusquets"],
             "publish_date": "2022",
             "languages": ["/languages/spa"],

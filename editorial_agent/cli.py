@@ -11,11 +11,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--profile", required=True, help="Ruta al perfil JSON")
     parser.add_argument("--query", required=True, help="Consulta editorial")
     parser.add_argument("--author", help="Autor del que buscar libros en Open Library")
+    parser.add_argument(
+        "--max-works",
+        type=int,
+        choices=range(1, 11),
+        metavar="N",
+        help="Obras de Open Library a revisar (1-10; por defecto 5)",
+    )
     args = parser.parse_args(argv)
 
-    result = build_graph().invoke(
-        {"profile_path": args.profile, "query": args.query, "author": args.author}
-    )
+    state = {"profile_path": args.profile, "query": args.query, "author": args.author}
+    if args.max_works is not None:
+        state["max_works"] = args.max_works
+    result = build_graph().invoke(state)
     if result.get("error"):
         print(f"Error: {result['error']}")
     else:
