@@ -31,11 +31,11 @@ The ~390 €/month is an **imputed value of time potentially freed** for counter
 
 | Field | Plan |
 |-------|------|
-| **Goal** | Learn which questions bookshops really ask and which ones the agent cannot answer yet |
+| **Goal** | Learn which questions bookshops really ask and which ones the agent cannot answer yet, and add **discovery mode**: proposing authors and books the bookseller does not know yet |
 | **Target user / buyer** | The pilot bookshops + 3–5 new bookshops |
 | **Channel / motion** | Referrals from pilot bookshops; presentation at a bookseller association meeting (to be identified) |
-| **Key deliverable** | Request log per bookshop and optional inventory import (CSV) to flag titles already in stock |
-| **Success metric** | % of requests answered with ≥2 verified records · number of unanswered or duplicated requests per month · weekly active bookshops |
+| **Key deliverable** | Request log per bookshop · discovery mode (candidates from publishers' new releases and literary prizes, judged against each bookshop's profile) · optional inventory import (CSV) to flag titles already in stock |
+| **Success metric** | % of requests answered with ≥2 verified records · % of discovered titles the bookshop adds to its order list · number of unanswered or duplicated requests per month · weekly active bookshops |
 
 ## Sprint 3 — Economic impact and paid offer
 
@@ -48,4 +48,4 @@ The ~390 €/month is an **imputed value of time potentially freed** for counter
 | **Success metric** | ≥30% of active bookshops convert to the paid plan · measured sales of titles first found by the agent (no attribution claimed without data) |
 
 ## Out of scope for these sprints
-Automatic purchasing, sales prediction, payments inside the product, scraping private data.
+Automatic purchasing, sales prediction, payments inside the product, scraping private data or sites that forbid it (e.g. Goodreads).

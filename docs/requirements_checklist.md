@@ -29,7 +29,7 @@ Sources: official "Project 3: Final Deliverables" (shared by the teacher, 12 Nov
 | ≥3 real external tools | Tavily, Open Library, Google Books (+ Gemini as the LLM). Real runs in `evidence/` (11 Nov, 4–5 services, 0 failures) |
 | Autonomy after the trigger | One command runs the whole graph; conditional edge rewrites the query when research is weak |
 | Branching / ReAct-style loop | `route_after_judge` + `reformulate_query`, max 2 attempts; real runs 150400 (2 attempts) and 150801 (1 attempt) |
-| Errors and validation | Retries, fallback model, rate-limit stop, NOT FINAL dossier, Python checks on LLM output; 47 mocked tests |
+| Errors and validation | Retries, fallback model, rate-limit stop, NOT FINAL dossier, Python checks on LLM output; 49 mocked tests |
 | Grounding | Live sources with URL per field, "no verificado", template dossier (no vector DB; argued in README §4) |
 | ≥2 sample reports | `samples/` (several dossiers from 10–11 Nov) |
 | Free tiers | $0 per report |

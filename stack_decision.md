@@ -7,7 +7,7 @@
 
 Our agent must make decisions that depend on intermediate results: if the first search finds too few useful books, it rewrites the query and searches again; if a publisher page contradicts Google Books, both values are shown; if a tool fails, the flow takes a different path instead of guessing. LangGraph gives us explicit, inspectable state (query, bookshop profile, candidates, sources, errors, attempts) and **conditional edges** for those branches, written and tested in Python.
 
-The core value of the product for a bookseller is **validation logic**: work vs edition, the most recent Spanish edition, ISBN checks, one source per field, a synopsis that is not a foreword note, a genre whose evidence appears in the publisher's text. That logic is easier to unit-test in Python than in visual nodes: the project has 47 automated tests, and they found real bugs during development.
+The core value of the product for a bookseller is **validation logic**: work vs edition, the most recent Spanish edition, ISBN checks, one source per field, a synopsis that is not a foreword note, a genre whose evidence appears in the publisher's text. That logic is easier to unit-test in Python than in visual nodes: the project has 49 automated tests, and they found real bugs during development.
 
 ## Why n8n is only secondary here
 

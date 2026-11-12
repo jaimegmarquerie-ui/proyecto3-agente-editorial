@@ -38,3 +38,17 @@ flowchart TD
 | Edition language unknown | Accepted with "idioma no verificado" (explicit non-Spanish editions are rejected) |
 | Retrieved text contains instructions | Treated as data only (prompt-injection guard) |
 | Not enough useful books after 2 attempts | Dossier says so honestly ("No se encontraron suficientes libros útiles…") |
+
+## Future: discovery mode (not built yet)
+
+Today the trigger needs an author or a topic. Discovery mode adds one node before the current flow, so the bookseller can find authors and books she does not know yet:
+
+```mermaid
+flowchart TD
+  START([Trigger: bookshop profile, no author needed]) --> discover_candidates[discover_candidates<br/>publishers' new releases + literary prizes<br/>cap on candidates, dedupe]
+  discover_candidates --> current[current flow for each candidate:<br/>search → editions → publisher page → describe → judge]
+  current --> rank[rank results for this bookshop]
+  rank --> write_dossier
+```
+
+Risks: more Gemini calls on the free tier (needs a cap like `--max-works`), duplicates across sources, and no legal access to reader data from Goodreads (no new API keys, scraping not allowed).

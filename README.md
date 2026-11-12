@@ -71,7 +71,7 @@ Free diagnostic for the Gemini key: `python -m editorial_agent.gemini_check gemi
 pytest
 ```
 
-47 automated tests. All external services are **mocked** (no network, no cost). They cover the happy path and failure paths: tool errors, retries (429/503/timeouts), fallback model, invalid JSON from the LLM, the self-correction loop and its stop rule, edition selection, publisher-page filters and the "not verified" rules.
+49 automated tests. All external services are **mocked** (no network, no cost). They cover the happy path and failure paths: tool errors, retries (429/503/timeouts), fallback model, invalid JSON from the LLM, the self-correction loop and its stop rule, edition selection, publisher-page filters and the "not verified" rules.
 
 Mocked tests prove our logic, not the real services: real runs and their evidence files are in `evidence/`.
 
@@ -145,7 +145,26 @@ GDELT (dated news, for "why now?") was tested on 11 Nov but blocked by a per-IP 
 - Reader ratings: Google Books had no ratings for these titles. Popularity is shown as information only and never lowers a book's position.
 - LLM and web results are not deterministic; free tiers can be overloaded. The dossier is marked NOT FINAL instead of guessing.
 - The judge tends to accept most books by an author that fits the profile; a ranked recommendation is future work.
+- The bookseller needs a starting point (an author or a topic). The agent does not yet propose authors or books she has never heard of: that is the **discovery mode** described below.
 
-## 8. How AI tools were used
+## 8. Next product step: discovery mode
+
+Today the agent answers *"I have a lead (an author or a topic): which books fit my bookshop, in which edition, with which sources?"* A typical trigger: a customer asks La Insumisa for an author the bookseller does not know yet.
+
+The next step answers *"I don't know what to look for: show me authors and books I don't know yet that fit my bookshop."* It adds one node at the start of the graph and reuses everything else:
+
+```
+discover_candidates → for each candidate: search → editions → publisher page → judge → dossier
+```
+
+| Candidate source | How | Difficulty |
+|---|---|---|
+| Publishers' new releases | Tavily limited to the domains already in `profiles/publisher_domains.json` | Low (same technique as today) |
+| Literary and journalism prizes | Tavily on the prizes' public pages | Low–medium |
+| Readers with similar taste (e.g. Goodreads) | Goodreads stopped issuing new API keys in 2020 and does not allow scraping, so a legal alternative is needed (public lists or another platform's API) | High |
+
+The bookshop profile and the AI judge stay the same: they decide which candidates fit. New work needed: a cap on candidates (more Gemini calls on the free tier), de-duplication (the same author can come from a prize and a new release) and a ranking of results. It is planned for Sprint 2 in [`gtm_future_sprints.md`](gtm_future_sprints.md).
+
+## 9. How AI tools were used
 
 Codex (OpenAI) wrote most of the code from detailed requests. Claude (Anthropic) acted as tutor and reviewer: it reviewed changes, ran the tests on a copy and helped write the documentation. The founder defined the problem, the bookshop profile and the product rules (edition vs work, latest edition in print, publisher as primary source, honesty rules), ran every test and real run, and validated the results as a bookseller.

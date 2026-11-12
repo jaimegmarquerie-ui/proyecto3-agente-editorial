@@ -29,11 +29,17 @@ On 12 Nov the run took 8 min 50 s because the free Gemini tier answered 503 (bus
 
 ## Demo steps (slide 4)
 
+0. Set up the use case in one sentence: *"A customer asked La Insumisa for Leila Guerriero. The bookseller doesn't know her work well and wants to know which books fit the shop before ordering them."*
+
 1. Terminal: point at the last two lines (dossier path and evidence path).
 2. Open the dossier: show **Investigación** (attempts, query, status "suficiente", tools used, no failed tools).
 3. Scroll to one book (e.g. *Teoría de la gravedad* or *La llamada*): verified ISBN, most recent edition, synopsis with source, genre (or "no verificado"), themes labelled as interpretation, judge's reason citing the profile.
 4. Ctrl+click one link (Open Library or the publisher page).
 5. Only if there is time: show `evidence/editorial_20261111_150400_*.json` → `search_history`: attempt 1 "obras de Leila Guerriero" found 0 books → attempt 2 rewritten query found 10.
+
+## If they ask: "What if the bookseller doesn't know which author to look for?"
+
+"Today the agent investigates a lead: an author or a topic. Discovery mode, which proposes authors and books the bookseller doesn't know yet from publishers' new releases and literary prizes, is planned for Sprint 2. It adds one node at the start of the graph; the profile and the judge stay the same."
 
 ## If something fails
 
