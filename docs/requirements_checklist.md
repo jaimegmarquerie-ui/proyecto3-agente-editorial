@@ -15,12 +15,12 @@ Sources: official "Project 3: Final Deliverables" (shared by the teacher, 12 Nov
 | 3 | `gtm_future_sprints.md` in repo root: 2–3 sprints × 5 parts (goal, buyer, channel, deliverable, metric) | `gtm_future_sprints.md` | ☑ |
 | 4 | Slides as PDF in the repo | `presentation/project3_slides.pdf` | ☑ (to review and rehearse) |
 | 5 | README: setup, how to run, file map, architecture, tools/APIs, env vars | `README.md` | ☑ |
-| 6 | Demo recording link in README (opens without login) | README, top | ☐ record and add link |
+| 6 | Demo recording link in README (opens without login) | README, top → `presentation/demo_recording.mp4` | ☑ |
 | 6 | Live demo inside a 6-minute presentation, with a backup | presentation | ☐ rehearse with a timer |
 | — | `.env.example` in repo; no `.env`, no keys committed | `.env.example`, `.gitignore`, `git log -- .env` empty | ☑ |
 | — | No real personal data in the repo | profile of the founder's own bookshop; public book data | ☑ |
-| — | GitHub URL submitted in the Student Portal (`project-3`) | Student Portal | ☐ Friday before 11:00 (aim for 10:00) |
-| — | Teacher can open the repository (currently private) | GitHub settings | ☐ make public or add collaborator |
+| — | GitHub URL submitted in the Student Portal (`project-3`) | Student Portal | ☑ 13 Nov, 09:41 |
+| — | Teacher can open the repository | GitHub settings | ☑ public since 12 Nov |
 
 ## Rubric points and our evidence
 

@@ -7,7 +7,7 @@ An autonomous research agent for **independent bookshops**. The bookseller types
 > **The agent researches and recommends; the bookseller validates and decides.**
 
 - **Presentation slides:** [`presentation/project3_slides.pdf`](presentation/project3_slides.pdf)
-- **Demo recording:** DEMO_LINK_PENDING
+- **Demo recording:** [`presentation/demo_recording.mp4`](https://github.com/jaimegmarquerie-ui/proyecto3-agente-editorial/blob/master/presentation/demo_recording.mp4) (2 min 33 s, real run on 13 Nov 2026: 5 works, 103 s, waiting part sped up 6x and labelled; no login needed)
 - **Stack decision:** [`stack_decision.md`](stack_decision.md) (LangGraph)
 - **Go-to-market sprints:** [`gtm_future_sprints.md`](gtm_future_sprints.md)
 - **Example outputs:** [`samples/`](samples/) (dossiers) and [`evidence/`](evidence/) (JSON logs of every run)
